@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Álbum MJ - Reproductor Premium</title>
+    <link rel="icon" type="image/png" href="path_to_your_album_cover.png">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Color Thief para extraer el color dominante de la portada -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/color-thief/2.3.0/color-thief.umd.js"></script>
+    <style>
+        /* Estilos de inputs tipo range (barras de progreso) */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 12px;
+            width: 12px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            margin-top: -4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            display: none;
+        }
+        input[type=range]:hover::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb {
+            display: block;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            border-radius: 2px;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+        
+        /* Transiciones suaves para el fondo dinámico */
+        #main-scroll { transition: background-image 1s ease-in-out; }
+        
+        /* Visualizador Canvas */
+        #visualizer { filter: drop-shadow(0 0 5px rgba(29, 185, 84, 0.5)); }
+
+        /* Animación para el panel de letras */
+        #lyrics-panel { transition: transform 0.3s ease, width 0.3s ease; }
+        .lyrics-hidden { transform: translateX(100%); width: 0; padding: 0; opacity: 0; }
+        .lyrics-visible { transform: translateX(0); width: 320px; opacity: 1; }
+        
+        /* Efecto pulsante suave cuando carga */
+        .loading-pulse { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+
+        /* Animación de portada mientras se reproduce */
+        @keyframes cover-breathe {
+            0%, 100% { transform: scale(1); box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+            50% { transform: scale(1.04); box-shadow: 0 16px 35px rgba(29, 185, 84, 0.35); }
+        }
+        .is-playing-anim {
+            animation: cover-breathe 3s ease-in-out infinite;
+            transition: all 0.5s ease;
+        }
+        
+        /* Prevenir selección de texto accidental */
+        body {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body class="bg-black text-white font-sans overflow-hidden h-screen flex flex-col selection:bg-[#1db954] selection:text-black" oncontextmenu="return false;">
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed top-5 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full shadow-lg z-50 transition-opacity duration-300 opacity-0 pointer-events-none flex items-center gap-2">
+        <i data-lucide="music" class="w-4 h-4"></i>
+        <span id="toast-message">El audio para esta pista aún no está disponible.</span>
+    </div>
+
+    <!-- Main App Container -->
+    <div class="flex flex-1 overflow-hidden relative">
+        
+        <!-- Sidebar (Desktop) -->
+        <div class="hidden md:flex flex-col w-64 bg-black p-4 gap-2 z-10">
+            <div class="bg-[#121212] rounded-lg p-4 flex flex-col gap-4">
+                <button class="flex items-center gap-4 text-white font-semibold">
+                    <i data-lucide="home"></i> Inicio
+                </button>
+                <button class="flex items-center gap-4 text-[#b3b3b3] hover:text-white transition-colors font-semibold">
+                    <i data-lucide="search"></i> Buscar
+                </button>
+            </div>
+            <div class="bg-[#121212] rounded-lg p-4 flex-1 flex flex-col gap-4 overflow-hidden">
+                <div class="flex items-center justify-between text-[#b3b3b3] hover:text-white transition-colors font-semibold cursor-pointer shadow-sm pb-2">
+                    <span class="flex items-center gap-4"><i data-lucide="library"></i> Tu Biblioteca</span>
+                </div>
+                <div class="flex flex-col gap-3 overflow-y-auto pr-2">
+                    <div class="flex items-center gap-3 cursor-pointer p-2 rounded bg-white/10 transition-colors">
+                        <img src="path_to_your_album_cover.png" alt="MJ Album" class="w-12 h-12 rounded object-cover shadow-md" draggable="false" />
+                        <div class="flex flex-col">
+                            <span class="text-[#1db954] text-sm font-semibold">MJ</span>
+                            <span class="text-white text-xs">Álbum • GianMattus</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex-1 bg-[#121212] md:my-2 md:mr-2 md:rounded-lg overflow-y-auto pb-32 bg-gradient-to-b from-[#4a4a4a] to-[#121212]" id="main-scroll">
+            
+            <!-- Header/Hero Section -->
+            <div class="p-6 md:p-8 flex flex-col md:flex-row items-center md:items-end gap-6 mt-6 md:mt-0 relative group">
+                <div class="relative cursor-pointer hover:scale-[1.02] transition-transform duration-300" id="album-cover-container" title="Reproducir/Pausar">
+                    <img 
+                        id="album-cover-main"
+                        src="path_to_your_album_cover.png" 
+                        alt="Portada del álbum MJ" 
+                        class="w-52 h-52 md:w-60 md:h-60 shadow-[0_8px_24px_rgba(0,0,0,0.5)] rounded-sm object-cover"
+                        draggable="false"
+                    />
+                    <!-- Overlay de Play/Pausar en hover sobre la portada -->
+                    <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center rounded-sm pointer-events-none z-20">
+                        <i data-lucide="play" id="cover-play-icon" class="w-16 h-16 text-white fill-white shadow-2xl"></i>
+                        <i data-lucide="pause" id="cover-pause-icon" class="w-16 h-16 text-white fill-white shadow-2xl hidden"></i>
+                    </div>
+                    <!-- Visualizador overlay sobre la imagen -->
+                    <div class="absolute bottom-0 left-0 w-full h-24 overflow-hidden rounded-b-sm z-10 bg-gradient-to-t from-black/60 to-transparent">
+                        <canvas id="visualizer" class="w-full h-full opacity-0 transition-opacity duration-300 pointer-events-none"></canvas>
+                    </div>
+                </div>
+                <div class="flex flex-col text-center md:text-left mt-4 md:mt-0 z-10">
+                    <span class="text-xs font-bold uppercase tracking-wider hidden md:block drop-shadow-md">Álbum</span>
+                    <h1 class="text-5xl md:text-7xl font-black mb-4 md:mb-6 tracking-tighter drop-shadow-lg">MJ</h1>
+                    <div class="flex items-center justify-center md:justify-start gap-2 text-sm font-semibold drop-shadow-md">
+                        <div class="w-6 h-6 rounded-full bg-gray-500 overflow-hidden flex items-center justify-center border border-white/20">
+                            <span class="text-[10px]">GM</span>
+                        </div>
+                        <span class="hover:underline cursor-pointer">GianMattus</span>
+                        <span class="text-white/80">• 15 canciones, 32 min aprox.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Bar -->
+            <div class="px-6 md:px-8 py-4 flex items-center gap-6 relative z-10">
+                <button id="main-play-btn" class="w-14 h-14 rounded-full bg-[#1db954] hover:bg-[#1ed760] flex items-center justify-center text-black shadow-lg transition-transform hover:scale-105">
+                    <div id="main-play-icon"><i data-lucide="play" class="ml-1 w-7 h-7 fill-black text-black"></i></div>
+                    <div id="main-pause-icon" class="hidden"><i data-lucide="pause" class="w-7 h-7 fill-black text-black"></i></div>
+                </button>
+                <button class="text-[#b3b3b3] hover:text-white transition-colors">
+                    <i data-lucide="heart" class="w-8 h-8"></i>
+                </button>
+                <button class="text-[#b3b3b3] hover:text-white transition-colors">
+                    <i data-lucide="more-horizontal" class="w-8 h-8"></i>
+                </button>
+            </div>
+
+            <!-- Tracklist Table -->
+            <div class="px-4 md:px-8 mt-2 relative z-10">
+                <div class="flex text-[#b3b3b3] text-sm font-semibold border-b border-white/10 pb-2 mb-4 px-4">
+                    <div class="w-10 text-center">#</div>
+                    <div class="flex-1">Título</div>
+                    <div class="w-16 text-center flex justify-center"><i data-lucide="clock" class="w-4 h-4"></i></div>
+                </div>
+                <div id="tracklist-container" class="flex flex-col gap-1">
+                    <!-- Tracks renderizados por JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Lyrics Panel (Desktop) -->
+        <div id="lyrics-panel" class="lyrics-hidden bg-[#242424] md:my-2 md:mr-2 rounded-lg overflow-hidden flex flex-col border-l border-black/20">
+            <div class="p-4 flex items-center justify-between border-b border-white/10">
+                <h3 class="font-bold text-lg">Letras</h3>
+                <button id="btn-close-lyrics" class="text-[#b3b3b3] hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6 font-semibold text-xl leading-relaxed text-[#b3b3b3]" id="lyrics-content">
+                <!-- Letras dinámicas -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Player Bar (Desktop & Mobile Mini) -->
+    <div id="bottom-player" class="h-24 bg-[#181818] border-t border-[#282828] flex items-center justify-between px-2 md:px-4 fixed md:sticky bottom-0 w-full z-[100] transition-all duration-300">
+        
+        <!-- Botón para cerrar fullscreen en móvil (oculto en desktop y mini) -->
+        <button id="btn-collapse-mobile" class="hidden absolute top-6 left-6 text-white"><i data-lucide="chevron-down" class="w-8 h-8"></i></button>
+
+        <!-- Now Playing Info -->
+        <div id="player-info" class="flex items-center w-1/2 md:w-1/3 min-w-[120px] cursor-pointer md:cursor-default">
+            <img id="player-cover" src="path_to_your_album_cover.png" alt="Cover" class="w-12 h-12 md:w-14 md:h-14 rounded-md object-cover mr-3 md:mr-4 shadow-md transition-all duration-300" draggable="false" />
+            <div class="flex flex-col truncate">
+                <span id="now-playing-title" class="text-white text-sm md:text-base font-semibold hover:underline cursor-pointer truncate">Intro</span>
+                <span class="text-[#b3b3b3] text-xs md:text-sm hover:underline cursor-pointer truncate">GianMattus</span>
+            </div>
+            <button class="ml-4 text-[#1db954] hidden sm:block"><i data-lucide="heart" class="w-4 h-4 fill-[#1db954]"></i></button>
+        </div>
+
+        <!-- Player Controls -->
+        <div id="player-controls" class="flex flex-col items-center justify-center w-auto md:w-1/3 max-w-[400px]">
+            <div class="flex items-center gap-4 md:gap-6 mb-2">
+                <button id="btn-shuffle" class="text-[#b3b3b3] hover:text-white hidden md:block transition-colors"><i data-lucide="shuffle" class="w-4 h-4 md:w-5 md:h-5"></i></button>
+                <button id="btn-prev" class="text-[#b3b3b3] hover:text-white transition-colors"><i data-lucide="skip-back" class="w-5 h-5 md:w-6 md:h-6 fill-current"></i></button>
+                <button id="btn-play-pause" class="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center rounded-full bg-white text-black hover:scale-105 transition-transform">
+                    <div id="player-play-icon"><i data-lucide="play" class="ml-1 w-5 h-5 md:w-4 md:h-4 fill-black"></i></div>
+                    <div id="player-pause-icon" class="hidden"><i data-lucide="pause" class="w-5 h-5 md:w-4 md:h-4 fill-black"></i></div>
+                </button>
+                <button id="btn-next" class="text-[#b3b3b3] hover:text-white transition-colors"><i data-lucide="skip-forward" class="w-5 h-5 md:w-6 md:h-6 fill-current"></i></button>
+                <button id="btn-repeat" class="text-[#b3b3b3] hover:text-white hidden md:block transition-colors"><i data-lucide="repeat" class="w-4 h-4 md:w-5 md:h-5"></i></button>
+            </div>
+            <div id="progress-container" class="hidden md:flex items-center w-full gap-2 text-xs text-[#b3b3b3] font-mono">
+                <span id="time-current" class="min-w-[40px] text-right">0:00</span>
+                <input type="range" id="progress-bar" min="0" max="100" value="0" class="w-full h-1 bg-gray-600 rounded-lg group-hover:accent-[#1db954]" style="background: linear-gradient(to right, #535353 0%, #535353 100%)" />
+                <span id="time-duration" class="min-w-[40px]">0:00</span>
+            </div>
+        </div>
+
+        <!-- Extra Controls (Desktop only) -->
+        <div id="extra-controls" class="items-center justify-end w-1/3 gap-3 hidden md:flex text-[#b3b3b3]">
+            <button id="btn-lyrics" class="hover:text-white transition-colors" title="Ver Letras"><i data-lucide="mic-2" class="w-5 h-5"></i></button>
+            <button class="hover:text-white"><i data-lucide="list-music" class="w-5 h-5"></i></button>
+            <div class="flex items-center gap-2 w-24 xl:w-32">
+                <button id="btn-mute" class="hover:text-white">
+                    <div id="icon-vol-on"><i data-lucide="volume-2" class="w-5 h-5"></i></div>
+                    <div id="icon-vol-off" class="hidden"><i data-lucide="volume-x" class="w-5 h-5"></i></div>
+                </button>
+                <input type="range" id="volume-bar" min="0" max="1" step="0.01" value="1" class="w-full h-1 bg-gray-600 rounded-lg" style="background: linear-gradient(to right, white 100%, #535353 100%)" />
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Player Sin restricciones de CORS -->
+    <audio id="audio-player"></audio>
+
+    <script>
+        // --- PROTECCIÓN BÁSICA CONTRA INSPECCIÓN ---
+        
+        // Bloquear clic derecho (context menu)
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        // Bloquear atajos de teclado de herramientas de desarrollo
+        document.addEventListener('keydown', (e) => {
+            // F12
+            if (e.key === 'F12') {
+                e.preventDefault();
+                return false;
+            }
+            // Ctrl+Shift+I / Cmd+Option+I (Inspeccionar)
+            if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
+                e.preventDefault();
+                return false;
+            }
+            // Ctrl+Shift+J / Cmd+Option+J (Consola)
+            if (e.ctrlKey && e.shiftKey && (e.key === 'J' || e.key === 'j')) {
+                e.preventDefault();
+                return false;
+            }
+            // Ctrl+Shift+C / Cmd+Option+C (Inspeccionar elemento)
+            if (e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+                e.preventDefault();
+                return false;
+            }
+            // Ctrl+U / Cmd+Option+U (Ver código fuente)
+            if (e.ctrlKey && (e.key === 'U' || e.key === 'u')) {
+                e.preventDefault();
+                return false;
+            }
+        });
+
+        // Tracklist con duraciones exactas
+        const TRACKLIST = [
+            { id: 1, title: "Intro", src: "Intro.mp3", duration: "1:38" },
+            { id: 2, title: "Hard To Say", src: "Hard To Say.mp3", duration: "2:28" },
+            { id: 3, title: "Heartbreak Choir", src: "Heartbreak Choir.mp3", duration: "0:59" },
+            { id: 4, title: "Losing Control", src: "Losing Control.mp3", duration: "1:30" },
+            { id: 5, title: "It's Not Me", src: "It's not me.mp3", duration: "2:24" },
+            { id: 6, title: "When You Were Mine", src: "When You Were Mine.mp3", duration: "2:38" },
+            { id: 7, title: "Only You", src: "Only You.mp3", duration: "2:26" },
+            { id: 8, title: "Unattainable", src: "Unattainable.mp3", duration: "1:28" },
+            { id: 9, title: "Unattainable Love", src: "Unattainable Love.mp3", duration: "1:53" },
+            { id: 10, title: "Runaway", src: "Runaway.mp3", duration: "3:00" },
+            { id: 11, title: "Not Quite Mine", src: "Not Quite Mine.mp3", duration: "2:21" },
+            { id: 12, title: "Good Old Days", src: "Good Old Days.mp3", duration: "2:41" },
+            { id: 13, title: "Half Price Halo", src: "Half Price Halo.mp3", duration: "2:01" },
+            { id: 14, title: "April", src: "April.mp3", duration: "2:39" },
+            { id: 15, title: "Middle of April", src: "Middle of April.mp3", duration: "2:59" }
+        ];
+
+        // Estado Global
+        let currentTrackIndex = 0;
+        let isPlaying = false;
+        let isMuted = localStorage.getItem('mj_muted') === 'true';
+        let currentVolume = parseFloat(localStorage.getItem('mj_volume')) || 1;
+        let isShuffle = false;
+        let isRepeat = false;
+        let isMobileExpanded = false;
+        let lyricsVisible = false;
+        let audioApiInitialized = false;
+        let shuffleQueue = [];
+        
+        // Referencias DOM
+        const audio = document.getElementById('audio-player');
+        const tracklistContainer = document.getElementById('tracklist-container');
+        const playPauseBtn = document.getElementById('btn-play-pause');
+        const mainPlayBtn = document.getElementById('main-play-btn');
+        const albumCoverContainer = document.getElementById('album-cover-container');
+        const playerInfoMobile = document.getElementById('player-info');
+        const prevBtn = document.getElementById('btn-prev');
+        const nextBtn = document.getElementById('btn-next');
+        const muteBtn = document.getElementById('btn-mute');
+        const shuffleBtn = document.getElementById('btn-shuffle');
+        const repeatBtn = document.getElementById('btn-repeat');
+        const lyricsBtn = document.getElementById('btn-lyrics');
+        
+        const progressBar = document.getElementById('progress-bar');
+        const volumeBar = document.getElementById('volume-bar');
+        const timeCurrentEl = document.getElementById('time-current');
+        const timeDurationEl = document.getElementById('time-duration');
+        const nowPlayingTitle = document.getElementById('now-playing-title');
+        
+        const toast = document.getElementById('toast');
+        const toastMessage = document.getElementById('toast-message');
+        const lyricsPanel = document.getElementById('lyrics-panel');
+        const lyricsContent = document.getElementById('lyrics-content');
+        const mainScroll = document.getElementById('main-scroll');
+        const albumImg = document.getElementById('album-cover-main');
+        const miniPlayerImg = document.getElementById('player-cover');
+        const visualizerCanvas = document.getElementById('visualizer');
+
+        // Utils
+        const formatTime = (time) => {
+            if (isNaN(time) || time < 0) return "0:00";
+            const mins = Math.floor(time / 60);
+            const secs = Math.floor(time % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        };
+
+        const showToast = (msg) => {
+            toastMessage.textContent = msg;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => toast.classList.add('opacity-0'), 3000);
+        };
+
+        // Lógica de "Bolsa Aleatoria" sin repeticiones
+        const fillShuffleQueue = () => {
+            let availableTracks = TRACKLIST
+                .map((track, index) => ({ src: track.src, index }))
+                .filter(t => t.src !== null && t.index !== currentTrackIndex) 
+                .map(t => t.index);
+            
+            for (let i = availableTracks.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [availableTracks[i], availableTracks[j]] = [availableTracks[j], availableTracks[i]];
+            }
+            shuffleQueue = availableTracks;
+        };
+
+        // Renderizado inicial
+        const renderTracklist = () => {
+            tracklistContainer.innerHTML = '';
+            TRACKLIST.forEach((track, index) => {
+                const isActive = index === currentTrackIndex;
+                const isTrackPlaying = isActive && isPlaying;
+                const hasAudio = track.src !== null;
+                
+                const row = document.createElement('div');
+                row.className = `group flex items-center py-2 px-4 rounded-md cursor-pointer transition-colors ${
+                    isActive ? 'bg-white/10' : 'hover:bg-white/10'
+                } ${!hasAudio ? 'opacity-50' : ''}`;
+                
+                row.addEventListener('click', () => handleTrackClick(index));
+
+                row.innerHTML = `
+                    <div class="w-10 text-center text-[#b3b3b3] flex items-center justify-center relative">
+                        ${isTrackPlaying 
+                            ? `<img src="https://open.spotifycdn.com/cdn/images/equaliser-animated-green.f93a2ef4.gif" alt="playing" class="w-4 h-4" />`
+                            : `<span class="group-hover:hidden ${isActive ? 'text-[#1db954]' : ''}">${track.id}</span>
+                               <i data-lucide="play" class="hidden group-hover:block w-4 h-4 fill-white text-white"></i>`
+                        }
+                    </div>
+                    <div class="flex-1 flex flex-col pl-2">
+                        <span class="text-base truncate ${isActive ? 'text-[#1db954]' : 'text-white'}">${track.title}</span>
+                        <span class="text-sm text-[#b3b3b3] truncate">GianMattus</span>
+                    </div>
+                    <div class="w-16 text-right pr-2 text-sm text-[#b3b3b3]">
+                        ${track.duration}
+                    </div>
+                `;
+                tracklistContainer.appendChild(row);
+            });
+            lucide.createIcons();
+        };
+
+        // Actualizar UI basándose en el estado
+        const updatePlayStateUI = () => {
+            const isPaused = !isPlaying;
+            
+            // Iconos
+            document.getElementById('player-play-icon').classList.toggle('hidden', !isPaused);
+            document.getElementById('player-pause-icon').classList.toggle('hidden', isPaused);
+            document.getElementById('main-play-icon').classList.toggle('hidden', !isPaused);
+            document.getElementById('main-pause-icon').classList.toggle('hidden', isPaused);
+            document.getElementById('cover-play-icon').classList.toggle('hidden', !isPaused);
+            document.getElementById('cover-pause-icon').classList.toggle('hidden', isPaused);
+            
+            // Mostrar visualizador SIEMPRE que esté reproduciendo
+            if (isPlaying) {
+                albumImg.classList.add('is-playing-anim');
+                miniPlayerImg.classList.add('is-playing-anim');
+                visualizerCanvas.classList.remove('opacity-0');
+                visualizerCanvas.classList.add('opacity-90');
+            } else {
+                albumImg.classList.remove('is-playing-anim');
+                miniPlayerImg.classList.remove('is-playing-anim');
+                visualizerCanvas.classList.add('opacity-0');
+                visualizerCanvas.classList.remove('opacity-90');
+            }
+
+            renderTracklist(); 
+        };
+
+        const loadTrack = (index) => {
+            currentTrackIndex = index;
+            const track = TRACKLIST[currentTrackIndex];
+            nowPlayingTitle.textContent = track.title;
+            
+            lyricsContent.innerHTML = `<p class="text-white mb-4 text-2xl font-bold">${track.title}</p>
+                <p>Mmh, yeah...</p><p>This is ${track.title}.</p><br>
+                <p>(Reproduciendo música)</p><br>
+                <p>Lost in the melody,</p><p>Finding my way back to you.</p><p>Yeah...</p>`;
+            
+            if (track.src) {
+                audio.src = track.src;
+                audio.load();
+            } else {
+                audio.removeAttribute('src'); 
+                timeDurationEl.textContent = track.duration;
+                timeCurrentEl.textContent = "0:00";
+                progressBar.value = 0;
+            }
+            
+            if (isShuffle && shuffleQueue.length === 0) {
+                fillShuffleQueue();
+            }
+
+            renderTracklist();
+        };
+
+        // Lógica de Reproducción con Animación del Ecualizador
+        let audioCtx, analyser, dataArray, source;
+        const initAudioAPI = () => {
+            if (audioApiInitialized) return;
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioCtx.createAnalyser();
+                source = audioCtx.createMediaElementSource(audio);
+                source.connect(analyser);
+                analyser.connect(audioCtx.destination);
+                analyser.fftSize = 256; // Mayor resolución
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                drawVisualizer();
+                audioApiInitialized = true;
+            } catch (e) { 
+                console.log("Web Audio API omitida:", e); 
+            }
+        };
+
+        const safePlay = () => {
+            if (!audio.hasAttribute('src') || audio.src === "") return;
+            
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    initAudioAPI();
+                    isPlaying = true;
+                    updatePlayStateUI();
+                }).catch(error => {
+                    console.error("Playback prevenido:", error);
+                    isPlaying = false;
+                    updatePlayStateUI();
+                });
+            }
+        };
+
+        const togglePlay = () => {
+            const track = TRACKLIST[currentTrackIndex];
+            if (!track.src) { 
+                showToast("El audio no está disponible."); 
+                return; 
+            }
+            
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            if (audio.paused) {
+                safePlay();
+            } else {
+                audio.pause();
+                isPlaying = false;
+                updatePlayStateUI();
+            }
+        };
+
+        const handleTrackClick = (index) => {
+            if (!TRACKLIST[index].src) { 
+                showToast("Audio no disponible."); 
+                return; 
+            }
+            
+            if (currentTrackIndex === index) { 
+                togglePlay(); 
+            } else {
+                loadTrack(index);
+                safePlay();
+            }
+        };
+
+        // Función para cambiar a la pista siguiente o anterior
+        // Se evalúa si la canción estaba reproduciéndose ANTES de cargar la nueva,
+        // para garantizar que siga la reproducción de forma fluida.
+        const nextTrack = (isEndedEvent = false) => {
+            const shouldPlay = isPlaying || isEndedEvent === true;
+            
+            if (isRepeat && audio.currentTime > 0) {
+                audio.currentTime = 0;
+                if (shouldPlay) safePlay();
+                return;
+            }
+            
+            let nextIndex = currentTrackIndex;
+            
+            if (isShuffle) {
+                if (shuffleQueue.length === 0) fillShuffleQueue();
+                if (shuffleQueue.length > 0) nextIndex = shuffleQueue.pop();
+            } else {
+                nextIndex++;
+                while (nextIndex < TRACKLIST.length && !TRACKLIST[nextIndex].src) nextIndex++;
+            }
+            
+            if (nextIndex < TRACKLIST.length) {
+                loadTrack(nextIndex);
+                if (shouldPlay) safePlay();
+            } else {
+                loadTrack(0);
+                audio.pause(); 
+                isPlaying = false;
+                updatePlayStateUI();
+            }
+        };
+
+        const prevTrack = () => {
+            const shouldPlay = isPlaying;
+
+            if (audio.currentTime > 3) { 
+                audio.currentTime = 0; 
+                if (shouldPlay) safePlay();
+                return; 
+            }
+            
+            let prevIndex = currentTrackIndex - 1;
+            while (prevIndex >= 0 && !TRACKLIST[prevIndex].src) prevIndex--;
+            
+            if (prevIndex >= 0) {
+                loadTrack(prevIndex);
+                if (shouldPlay) safePlay();
+            } else { 
+                audio.currentTime = 0; 
+                if (shouldPlay) safePlay();
+            }
+        };
+
+        const updateProgress = () => {
+            if (isNaN(audio.duration)) return;
+            const current = audio.currentTime;
+            const duration = audio.duration;
+            const percent = (current / duration) * 100;
+            
+            progressBar.max = duration;
+            progressBar.value = current;
+            timeCurrentEl.textContent = formatTime(current);
+            timeDurationEl.textContent = formatTime(duration);
+            progressBar.style.background = `linear-gradient(to right, #1db954 ${percent}%, #535353 ${percent}%)`;
+        };
+
+        const updateVolumeUI = () => {
+            const volOn = document.getElementById('icon-vol-on');
+            const volOff = document.getElementById('icon-vol-off');
+            
+            if (isMuted || currentVolume === 0) {
+                volOn.classList.add('hidden'); volOff.classList.remove('hidden');
+                audio.volume = 0;
+                volumeBar.style.background = `linear-gradient(to right, white 0%, #535353 0%)`;
+            } else {
+                volOn.classList.remove('hidden'); volOff.classList.add('hidden');
+                audio.volume = currentVolume;
+                volumeBar.style.background = `linear-gradient(to right, white ${currentVolume * 100}%, #535353 ${currentVolume * 100}%)`;
+            }
+            volumeBar.value = currentVolume;
+            localStorage.setItem('mj_volume', currentVolume);
+            localStorage.setItem('mj_muted', isMuted);
+        };
+
+        const setDynamicBackground = () => {
+            try {
+                const colorThief = new ColorThief();
+                if (albumImg.complete) {
+                    const color = colorThief.getColor(albumImg);
+                    mainScroll.style.backgroundImage = `linear-gradient(to bottom, rgb(${color[0]}, ${color[1]}, ${color[2]}), #121212 60%)`;
+                } else {
+                    albumImg.addEventListener('load', () => {
+                        const color = colorThief.getColor(albumImg);
+                        mainScroll.style.backgroundImage = `linear-gradient(to bottom, rgb(${color[0]}, ${color[1]}, ${color[2]}), #121212 60%)`;
+                    });
+                }
+            } catch(e) { }
+        };
+
+        // --- Visualizador de Barras Mejorado ---
+        const canvasCtx = visualizerCanvas.getContext('2d');
+        const drawVisualizer = () => {
+            requestAnimationFrame(drawVisualizer);
+            if(!analyser || !isPlaying) return;
+            
+            visualizerCanvas.width = visualizerCanvas.offsetWidth;
+            visualizerCanvas.height = visualizerCanvas.offsetHeight;
+            
+            analyser.getByteFrequencyData(dataArray);
+            canvasCtx.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+            
+            const barWidth = 6;
+            const gap = 3;
+            const numBars = Math.floor(visualizerCanvas.width / (barWidth + gap));
+            // Usar la parte baja-media de las frecuencias para la música
+            const step = Math.max(1, Math.floor((analyser.frequencyBinCount * 0.6) / numBars));
+            
+            let x = 0;
+            
+            for(let i = 0; i < numBars; i++) {
+                let sum = 0;
+                for(let j = 0; j < step; j++) {
+                    sum += dataArray[(i * step) + j] || 0;
+                }
+                const value = sum / step;
+                // Altura de la barra con un mínimo de 2px
+                const barHeight = Math.max((value / 255) * visualizerCanvas.height * 0.9, 2);
+                
+                // Color verde de Spotify
+                canvasCtx.fillStyle = '#1db954';
+                canvasCtx.fillRect(x, visualizerCanvas.height - barHeight, barWidth, barHeight);
+                
+                // Efecto Premium: Pequeño "sombrero" blanco en la punta
+                canvasCtx.fillStyle = '#ffffff';
+                canvasCtx.fillRect(x, visualizerCanvas.height - barHeight - 2, barWidth, 2);
+                
+                x += barWidth + gap;
+            }
+        };
+
+        const toggleMobilePlayer = () => {
+            if (window.innerWidth >= 768) return;
+            const bp = document.getElementById('bottom-player');
+            const pc = document.getElementById('player-controls');
+            const pbarContainer = document.getElementById('progress-container');
+            const cover = document.getElementById('player-cover');
+            const info = document.getElementById('player-info');
+            const colBtn = document.getElementById('btn-collapse-mobile');
+
+            isMobileExpanded = !isMobileExpanded;
+            
+            if(isMobileExpanded) {
+                bp.classList.remove('h-24', 'px-2');
+                bp.classList.add('h-full', 'fixed', 'inset-0', 'flex-col', 'pt-20', 'pb-10', 'px-8', 'bg-gradient-to-b', 'from-gray-800', 'to-black');
+                pc.classList.remove('w-auto');
+                pc.classList.add('w-full', 'mt-8');
+                pbarContainer.classList.remove('hidden');
+                pbarContainer.classList.add('flex', 'w-full');
+                cover.classList.remove('w-12', 'h-12', 'mr-3');
+                cover.classList.add('w-full', 'h-auto', 'aspect-square', 'mb-8', 'shadow-2xl');
+                info.classList.remove('w-1/2', 'cursor-pointer');
+                info.classList.add('w-full', 'flex-col', 'items-start', 'cursor-default');
+                document.getElementById('now-playing-title').classList.replace('text-sm', 'text-2xl');
+                document.getElementById('btn-shuffle').classList.replace('hidden', 'block');
+                document.getElementById('btn-repeat').classList.replace('hidden', 'block');
+                colBtn.classList.remove('hidden');
+            } else {
+                bp.classList.add('h-24', 'px-2');
+                bp.classList.remove('h-full', 'fixed', 'inset-0', 'flex-col', 'pt-20', 'pb-10', 'px-8', 'bg-gradient-to-b', 'from-gray-800', 'to-black');
+                pc.classList.add('w-auto');
+                pc.classList.remove('w-full', 'mt-8');
+                pbarContainer.classList.add('hidden');
+                pbarContainer.classList.remove('flex', 'w-full');
+                cover.classList.add('w-12', 'h-12', 'mr-3');
+                cover.classList.remove('w-full', 'h-auto', 'aspect-square', 'mb-8', 'shadow-2xl');
+                info.classList.add('w-1/2', 'cursor-pointer');
+                info.classList.remove('w-full', 'flex-col', 'items-start', 'cursor-default');
+                document.getElementById('now-playing-title').classList.replace('text-2xl', 'text-sm');
+                document.getElementById('btn-shuffle').classList.replace('block', 'hidden');
+                document.getElementById('btn-repeat').classList.replace('block', 'hidden');
+                colBtn.classList.add('hidden');
+            }
+        };
+
+        // --- Event Listeners Centralizados ---
+        audio.addEventListener('play', () => { isPlaying = true; updatePlayStateUI(); });
+        audio.addEventListener('pause', () => { isPlaying = false; updatePlayStateUI(); });
+        audio.addEventListener('timeupdate', updateProgress);
+        audio.addEventListener('loadedmetadata', updateProgress);
+        // Cuando el audio termina nativamente, pasamos true para forzar que inicie el siguiente track
+        audio.addEventListener('ended', () => nextTrack(true));
+
+        playPauseBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+        mainPlayBtn.addEventListener('click', togglePlay);
+        albumCoverContainer.addEventListener('click', togglePlay);
+        playerInfoMobile.addEventListener('click', toggleMobilePlayer);
+        
+        // Los botones físicos confían en el estado de si la pista anterior estaba pausada o no
+        nextBtn.addEventListener('click', () => nextTrack(false));
+        prevBtn.addEventListener('click', () => prevTrack());
+        document.getElementById('btn-collapse-mobile').addEventListener('click', (e) => { e.stopPropagation(); toggleMobilePlayer(); });
+        
+        shuffleBtn.addEventListener('click', () => {
+            isShuffle = !isShuffle;
+            shuffleBtn.classList.toggle('text-[#1db954]', isShuffle);
+            shuffleBtn.classList.toggle('text-[#b3b3b3]', !isShuffle);
+            if (isShuffle) {
+                fillShuffleQueue();
+                showToast("Modo Aleatorio Activado");
+            } else {
+                shuffleQueue = [];
+            }
+        });
+        
+        repeatBtn.addEventListener('click', () => {
+            isRepeat = !isRepeat;
+            repeatBtn.classList.toggle('text-[#1db954]', isRepeat);
+            repeatBtn.classList.toggle('text-[#b3b3b3]', !isRepeat);
+        });
+
+        lyricsBtn.addEventListener('click', () => {
+            lyricsVisible = !lyricsVisible;
+            lyricsBtn.classList.toggle('text-[#1db954]', lyricsVisible);
+            if(lyricsVisible) {
+                lyricsPanel.classList.remove('lyrics-hidden');
+                lyricsPanel.classList.add('lyrics-visible');
+            } else {
+                lyricsPanel.classList.add('lyrics-hidden');
+                lyricsPanel.classList.remove('lyrics-visible');
+            }
+        });
+        document.getElementById('btn-close-lyrics').addEventListener('click', () => lyricsBtn.click());
+
+        window.addEventListener('keydown', (e) => {
+            // Se mantiene la funcionalidad de la barra espaciadora y las flechas de dirección para el reproductor
+            if(e.target.tagName.toLowerCase() === 'input') return; 
+            switch(e.code) {
+                case 'Space': e.preventDefault(); togglePlay(); break;
+                case 'ArrowRight': e.preventDefault(); nextTrack(false); break;
+                case 'ArrowLeft': e.preventDefault(); prevTrack(); break;
+            }
+        });
+
+        progressBar.addEventListener('input', (e) => {
+            audio.currentTime = e.target.value;
+            const percent = (e.target.value / audio.duration) * 100;
+            progressBar.style.background = `linear-gradient(to right, #1db954 ${percent}%, #535353 ${percent}%)`;
+        });
+
+        volumeBar.addEventListener('input', (e) => {
+            currentVolume = parseFloat(e.target.value);
+            if (currentVolume > 0) isMuted = false;
+            updateVolumeUI();
+        });
+
+        muteBtn.addEventListener('click', () => {
+            isMuted = !isMuted;
+            updateVolumeUI();
+        });
+
+        lucide.createIcons();
+        updateVolumeUI(); 
+        loadTrack(0);
+        setDynamicBackground(); 
+    </script>
+</body>
+</html>
