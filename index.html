@@ -276,7 +276,7 @@
             }
         });
 
-        // Tracklist con duraciones exactas
+        // Tracklist con duraciones exactas y formato .mp3
         const TRACKLIST = [
             { id: 1, title: "Intro", src: "Intro.mp3", duration: "1:38" },
             { id: 2, title: "Hard To Say", src: "Hard To Say.mp3", duration: "2:28" },
@@ -425,6 +425,11 @@
                 visualizerCanvas.classList.remove('opacity-90');
             }
 
+            // Sincronizar estado con el sistema operativo (Pantalla de bloqueo)
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+            }
+
             renderTracklist(); 
         };
 
@@ -450,6 +455,18 @@
             
             if (isShuffle && shuffleQueue.length === 0) {
                 fillShuffleQueue();
+            }
+
+            // Actualizar la pantalla de bloqueo del celular (Media Session API)
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: track.title,
+                    artist: 'GianMattus',
+                    album: 'MJ',
+                    artwork: [
+                        { src: 'path_to_your_album_cover.png', sizes: '512x512', type: 'image/jpeg' }
+                    ]
+                });
             }
 
             renderTracklist();
@@ -790,6 +807,22 @@
         updateVolumeUI(); 
         loadTrack(0);
         setDynamicBackground(); 
+
+        // Configurar los controles de la pantalla de bloqueo (Media Session API)
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.setActionHandler('play', () => togglePlay());
+            navigator.mediaSession.setActionHandler('pause', () => togglePlay());
+            navigator.mediaSession.setActionHandler('previoustrack', () => prevTrack());
+            navigator.mediaSession.setActionHandler('nexttrack', () => nextTrack(false));
+            // Opcional: si quieres que puedan adelantar/atrasar desde la barra de notificaciones
+            navigator.mediaSession.setActionHandler('seekto', (details) => {
+                if (details.fastSeek && 'fastSeek' in audio) {
+                    audio.fastSeek(details.seekTime);
+                } else {
+                    audio.currentTime = details.seekTime;
+                }
+            });
+        }
     </script>
 </body>
 </html>
